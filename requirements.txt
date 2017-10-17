@@ -1,0 +1,4 @@
+nengo
+nengolib
+numpy
+matplotlib

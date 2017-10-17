@@ -1,6 +1,8 @@
 import nengo
 import numpy as np
 
+from nengolib.stats import sphere as depedent_sphere
+
 
 def gen_feed_func(vocab, vocab_items, t_present: float):
 
@@ -12,31 +14,54 @@ def gen_feed_func(vocab, vocab_items, t_present: float):
     return f
 
 
-def gen_vecs_aaron(n_items: int, d: int, simi: float):
-    sphere = nengo.dists.UniformHypersphere(surface=True)
-    vecs = []
+def graham_m(d: int, simi: float) -> np.array:
 
-    for _ in range(n_items):
-        u = sphere.sample(1, d=d)  # given vector
+    def proj(u: np.array, v: np.array) -> np.array:
+        return u.dot(v.T) / u.dot(u.T) * u
 
-        p = sphere.sample(1, d=d)
-        q = p - u.dot(p.T) * u
-        v = simi*u + np.sqrt((1 - simi**2) / q.dot(q.T))*q
-        vecs.append(v.squeeze())
+    uniform_sphere = nengo.dists.UniformHypersphere(surface=True)
+    # output matrix
+    M = np.zeros((d, d))
+    # Gram-Schmidt orthogonalization of S
+    Q = np.zeros((d, d))
+    # some random samples used to form Q
+    S = uniform_sphere.sample(d, d=d)
 
-    return vecs
+    # Simultaneously apply Gram-Schmidt to S to compute Q while
+    # using Q to form M. This exploits the fact that
+    # Q[i, :].T.dot(M[j, :]) == 0 for all j < i.
+    for i in range(d):
+        Q[i, :] = S[i, :]
+        a = simi / ((i - 1) * simi + 1)
+        for j in range(i):
+            Q[i, :] -= proj(Q[j, :], S[i, :])
+            M[i, :] += a * M[j, :]
+        M[i, :] += np.sqrt((1 - i * a * simi) / Q[i, :].T.dot(Q[i, :])) * Q[i, :]
+
+    return M
 
 
-def gen_vecs_jan(n_items: int, d: int, simi: float):
-    indices = np.arange(n_items, dtype=int)
-    target_cor = np.ones((n_items, n_items)) * simi
-    np.fill_diagonal(target_cor, 1.)
+def gen_vecs(n_items: int, d: int, simi: float) -> np.array:
+    M = graham_m(d, simi)
+    return M[:n_items]
 
-    u, s, _ = np.linalg.svd(target_cor)
-    assert np.allclose(np.linalg.norm(u, axis=1), 1.)
 
-    base_pos_vec = np.dot(u, np.diag(np.sqrt(s)))
-    assert np.allclose(np.linalg.norm(base_pos_vec, axis=1), 1)
+def gen_vecs_iter(n_items: int, d: int, simi: float) -> np.array:
 
-    return np.dot(
-        np.random.permutation(np.eye(n_items)[:, :n_items]), base_pos_vec.T).T
+    M = graham_m(d, simi)
+
+    good = []
+    bad = []
+    for p in depedent_sphere.sample(int(2e4), d=d):
+        if np.all(M.dot(p.T) >= simi):
+            good.append(p)
+            if len(good) > n_items:
+                break
+        else:
+            bad.append(p)
+
+    assert len(good) > 0
+    good = np.asarray(good)
+    assert np.all(good.dot(good.T) >= simi)
+
+    return good
