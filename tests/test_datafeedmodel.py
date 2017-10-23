@@ -6,7 +6,6 @@ import numpy as np
 from data_feed import BasicDataFeed
 from utils import gen_vecs
 
-import itertools
 
 n_items = 4
 t_present = 2.0
